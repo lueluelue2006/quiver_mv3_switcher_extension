@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Quiver Quick Account Switcher",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "One-click next account switcher for app.quiver.ai.",
   "permissions": ["storage", "cookies", "scripting", "tabs"],
   "host_permissions": [
     "https://app.quiver.ai/*",
-    "https://api.mail.tm/*"
+    "https://api.mail.tm/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "background": {
     "service_worker": "service_worker.js",

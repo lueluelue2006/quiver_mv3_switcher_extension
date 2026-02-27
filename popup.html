@@ -26,6 +26,13 @@
         justify-content: space-between;
         gap: 8px;
       }
+      .top {
+        align-items: baseline;
+      }
+      .version {
+        font-size: 11px;
+        color: #94a3b8;
+      }
       .status {
         font-size: 12px;
         color: #94a3b8;
@@ -107,15 +114,26 @@
         font-size: 12px;
         color: #94a3b8;
       }
+      .repo-link {
+        color: #93c5fd;
+        font-size: 12px;
+        text-decoration: none;
+      }
+      .repo-link:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div class="row">
+      <div class="row top">
         <strong>Cookie 管理</strong>
-        <button id="refreshBtn">刷新</button>
+        <span id="versionText" class="version">版本: -</span>
       </div>
-      <div id="status" class="status">就绪</div>
+      <div class="row">
+        <button id="refreshBtn">刷新</button>
+        <div id="status" class="status">就绪</div>
+      </div>
 
       <div class="card">
         <h3>最近 3 个 Cookie</h3>
@@ -138,6 +156,24 @@
         <textarea id="importInput" placeholder="粘贴 Cookie JSON 或仅粘贴 value"></textarea>
         <div style="height: 8px"></div>
         <button id="importBtn" class="primary">导入并应用</button>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <h3 style="margin: 0">更新</h3>
+          <button id="checkUpdateBtn">检查更新</button>
+        </div>
+        <div id="updateStatus" class="status">未检查</div>
+        <div class="row">
+          <a
+            id="repoLink"
+            class="repo-link"
+            href="https://github.com/lueluelue2006/quiver_mv3_switcher_extension"
+            target="_blank"
+            rel="noreferrer"
+          >仓库链接</a>
+          <button id="openUpdateBtn" style="display: none">前往更新</button>
+        </div>
       </div>
     </div>
     <script src="popup.js"></script>

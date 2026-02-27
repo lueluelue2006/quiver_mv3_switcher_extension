@@ -7,10 +7,26 @@ const refreshBtn = document.getElementById("refreshBtn");
 const exportBtn = document.getElementById("exportBtn");
 const copyExportBtn = document.getElementById("copyExportBtn");
 const importBtn = document.getElementById("importBtn");
+const versionTextEl = document.getElementById("versionText");
+const checkUpdateBtn = document.getElementById("checkUpdateBtn");
+const updateStatusEl = document.getElementById("updateStatus");
+const openUpdateBtn = document.getElementById("openUpdateBtn");
+const repoLinkEl = document.getElementById("repoLink");
+
+const REPO_WEB_URL = "https://github.com/lueluelue2006/quiver_mv3_switcher_extension";
+const REPO_RELEASES_URL = `${REPO_WEB_URL}/releases`;
+const REMOTE_MANIFEST_URL = "https://raw.githubusercontent.com/lueluelue2006/quiver_mv3_switcher_extension/main/manifest.json";
+const CURRENT_VERSION = chrome.runtime.getManifest().version || "0.0.0";
+let latestVersionCached = null;
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text || "";
   statusEl.classList.toggle("error", Boolean(isError));
+}
+
+function setUpdateStatus(text, isError = false) {
+  updateStatusEl.textContent = text || "";
+  updateStatusEl.classList.toggle("error", Boolean(isError));
 }
 
 function sendMessage(message) {
@@ -65,6 +81,44 @@ function downloadJsonFile(payload, filename) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function parseSemver(input) {
+  const parts = String(input || "")
+    .trim()
+    .replace(/^v/i, "")
+    .split(".")
+    .map((p) => Number.parseInt(p, 10));
+  while (parts.length < 3) {
+    parts.push(0);
+  }
+  return parts.slice(0, 3).map((n) => (Number.isFinite(n) ? n : 0));
+}
+
+function compareSemver(a, b) {
+  const av = parseSemver(a);
+  const bv = parseSemver(b);
+  for (let i = 0; i < 3; i += 1) {
+    if (av[i] > bv[i]) return 1;
+    if (av[i] < bv[i]) return -1;
+  }
+  return 0;
+}
+
+async function fetchLatestVersion() {
+  const res = await fetch(`${REMOTE_MANIFEST_URL}?t=${Date.now()}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`remote manifest ${res.status}`);
+  }
+  const data = await res.json();
+  const version = String(data?.version || "").trim();
+  if (!version) {
+    throw new Error("remote version missing");
+  }
+  latestVersionCached = version;
+  return version;
 }
 
 async function copyText(text) {
@@ -226,7 +280,34 @@ importBtn.addEventListener("click", async () => {
   }
 });
 
+checkUpdateBtn.addEventListener("click", async () => {
+  setUpdateStatus("检查中...");
+  openUpdateBtn.style.display = "none";
+  try {
+    const latest = await fetchLatestVersion();
+    if (compareSemver(latest, CURRENT_VERSION) > 0) {
+      setUpdateStatus(`发现新版本: ${latest}（当前 ${CURRENT_VERSION}）`);
+      openUpdateBtn.style.display = "";
+    } else {
+      setUpdateStatus(`已是最新版本: ${CURRENT_VERSION}`);
+    }
+  } catch (err) {
+    setUpdateStatus(`检查失败: ${String(err?.message || err)}`, true);
+  }
+});
+
+openUpdateBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: REPO_RELEASES_URL });
+});
+
+repoLinkEl.addEventListener("click", (event) => {
+  event.preventDefault();
+  chrome.tabs.create({ url: REPO_WEB_URL });
+});
+
 (async () => {
+  versionTextEl.textContent = `版本: ${CURRENT_VERSION}`;
+  setUpdateStatus(`当前版本: ${CURRENT_VERSION}`);
   setStatus("加载中...");
   try {
     await loadHistory();

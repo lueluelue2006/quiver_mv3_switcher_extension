@@ -5,7 +5,7 @@ const MAGIC_URL = `${QUIVER_ORIGIN}/api/auth/magic`;
 const MAGIC_VERIFY_URL = `${QUIVER_ORIGIN}/api/auth/magic/verify`;
 const SESSION_URL = `${QUIVER_ORIGIN}/api/_auth/session`;
 const MAIL_BASE = "https://api.mail.tm";
-const QUEUE_TARGET = 1;
+const QUEUE_TARGET = 2;
 const MAIL_POLL_INTERVAL_MS = 3000;
 const MAIL_TIMEOUT_MS = 120000;
 const QUEUE_PREFILL_TIMEOUT_MS = 120000;
@@ -804,28 +804,37 @@ async function applyByAccount(tabId, account) {
     return applyByCookie(tabId, account);
   }
   if (account?.magicCode && account?.email) {
-    try {
-      await chrome.cookies.remove({ url: QUIVER_ORIGIN, name: SESSION_COOKIE });
-    } catch (err) {
-      void err;
-    }
-    await reloadOrNavigateTab(tabId);
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        try {
+          await chrome.cookies.remove({ url: QUIVER_ORIGIN, name: SESSION_COOKIE });
+        } catch (err) {
+          void err;
+        }
+        await reloadOrNavigateTab(tabId);
 
-    const verify = await runVerifyInTab(tabId, account.email, account.magicCode);
-    if (!verify || !verify.ok) {
-      throw new Error(`magic verify failed ${verify?.status || 0}: ${String(verify?.body || "").slice(0, 180)}`);
+        const verify = await runVerifyInTab(tabId, account.email, account.magicCode);
+        if (!verify || !verify.ok) {
+          throw new Error(`magic verify failed ${verify?.status || 0}: ${String(verify?.body || "").slice(0, 180)}`);
+        }
+
+        await reloadOrNavigateTab(tabId);
+        const session = await checkSessionInTabWithRetry(tabId, 4, 4000, 220);
+        if (!session.ok || !session.email) {
+          throw new Error(
+            `magic session verify failed: ${session.error ? String(session.error) : "unverified"}; verify=${String(verify?.body || "").slice(0, 180)}`,
+          );
+        }
+        if (String(session.email).toLowerCase() !== String(account.email).toLowerCase()) {
+          throw new Error(`magic session mismatch: expected ${account.email}, got ${session.email}`);
+        }
+        return { ok: true, source: "magic", sessionEmail: session.email || account.email };
+      } catch (err) {
+        lastErr = err;
+      }
     }
-    await reloadOrNavigateTab(tabId);
-    const session = await checkSessionInTabWithRetry(tabId, 4, 4000, 220);
-    if (!session.ok || !session.email) {
-      throw new Error(
-        `magic session verify failed: ${session.error ? String(session.error) : "unverified"}; verify=${String(verify?.body || "").slice(0, 180)}`,
-      );
-    }
-    if (String(session.email).toLowerCase() !== String(account.email).toLowerCase()) {
-      throw new Error(`magic session mismatch: expected ${account.email}, got ${session.email}`);
-    }
-    return { ok: true, source: "magic", sessionEmail: session.email || account.email };
+    throw lastErr || new Error("magic apply failed");
   }
   throw new Error("account missing prepared cookie and magic code");
 }
@@ -929,6 +938,7 @@ async function switchToNextAccount(tabId) {
   state.switching = true;
   state.switchStartedAt = Date.now();
   const startedAt = Date.now();
+  const previousCookie = await getCurrentSessionCookie().catch(() => null);
   try {
     await snapshotCurrentAccountToHistory(tabId);
 
@@ -986,14 +996,25 @@ async function switchToNextAccount(tabId) {
       queued: state.queue.length,
     };
   } catch (error) {
-    state.lastError = String(error?.message || error);
+    const originalError = String(error?.message || error);
+    let restoreNote = "";
+    if (previousCookie?.value) {
+      try {
+        await applyCookieRecord(previousCookie);
+        await reloadOrNavigateTab(tabId);
+        restoreNote = " | rollback=ok";
+      } catch (restoreErr) {
+        restoreNote = ` | rollback=failed:${String(restoreErr?.message || restoreErr)}`;
+      }
+    }
+    state.lastError = `${originalError}${restoreNote}`;
     state.lastSwitchResult = {
       ts: Date.now(),
       ok: false,
-      error: String(error?.message || error),
+      error: `${originalError}${restoreNote}`,
     };
     await saveState();
-    return { ok: false, error: String(error?.message || error), queued: state.queue.length };
+    return { ok: false, error: `${originalError}${restoreNote}`, queued: state.queue.length };
   } finally {
     state.switching = false;
     state.switchStartedAt = null;
