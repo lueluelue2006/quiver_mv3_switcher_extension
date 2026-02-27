@@ -1,7 +1,14 @@
 (() => {
   const STATE_POLL_MS = 4000;
   const DRAG_THRESHOLD_PX = 4;
-  const POSITION_STORAGE_KEY = "__qsw_floating_pos_v1";
+  const POSITION_STORAGE_KEY = "__qsw_floating_pos_v2";
+  const LEGACY_POSITION_STORAGE_KEY = "__qsw_floating_pos_v1";
+  const DEFAULT_ANCHOR = Object.freeze({
+    xSide: "right",
+    xOffset: 12,
+    ySide: "top",
+    yOffset: 12,
+  });
   const STYLE = `
     .qsw-floating {
       position: fixed;
@@ -69,6 +76,7 @@
   let isBusy = false;
   let pollTimer = null;
   let suppressClickUntil = 0;
+  let floatingAnchor = { ...DEFAULT_ANCHOR };
   const dragState = {
     active: false,
     moved: false,
@@ -101,25 +109,132 @@
     root.style.bottom = "auto";
   }
 
+  function normalizeAnchor(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const xSide = raw.xSide === "left" || raw.xSide === "right" ? raw.xSide : null;
+    const ySide = raw.ySide === "top" || raw.ySide === "bottom" ? raw.ySide : null;
+    const xOffset = Number(raw.xOffset);
+    const yOffset = Number(raw.yOffset);
+    if (!xSide || !ySide || !Number.isFinite(xOffset) || !Number.isFinite(yOffset)) {
+      return null;
+    }
+    return { xSide, xOffset, ySide, yOffset };
+  }
+
+  function buildAnchorFromAbsolute(left, top, width, height) {
+    const safeWidth = Math.ceil(width);
+    const safeHeight = Math.ceil(height);
+    const maxLeft = Math.max(0, window.innerWidth - safeWidth);
+    const maxTop = Math.max(0, window.innerHeight - safeHeight);
+    const clampedLeft = clamp(left, 0, maxLeft);
+    const clampedTop = clamp(top, 0, maxTop);
+    const right = Math.max(0, window.innerWidth - (clampedLeft + safeWidth));
+    const bottom = Math.max(0, window.innerHeight - (clampedTop + safeHeight));
+
+    return {
+      xSide: clampedLeft <= right ? "left" : "right",
+      xOffset: Math.round(clampedLeft <= right ? clampedLeft : right),
+      ySide: clampedTop <= bottom ? "top" : "bottom",
+      yOffset: Math.round(clampedTop <= bottom ? clampedTop : bottom),
+    };
+  }
+
+  function applyAnchoredPosition(anchor) {
+    const normalized = normalizeAnchor(anchor) || { ...DEFAULT_ANCHOR };
+    const rect = root.getBoundingClientRect();
+    const safeWidth = Math.ceil(rect.width);
+    const safeHeight = Math.ceil(rect.height);
+    const maxX = Math.max(0, window.innerWidth - safeWidth);
+    const maxY = Math.max(0, window.innerHeight - safeHeight);
+    let xOffset = clamp(normalized.xOffset, 0, maxX);
+    let yOffset = clamp(normalized.yOffset, 0, maxY);
+
+    if (normalized.xSide === "left") {
+      root.style.left = `${xOffset}px`;
+      root.style.right = "auto";
+    } else {
+      root.style.right = `${xOffset}px`;
+      root.style.left = "auto";
+    }
+
+    if (normalized.ySide === "top") {
+      root.style.top = `${yOffset}px`;
+      root.style.bottom = "auto";
+    } else {
+      root.style.bottom = `${yOffset}px`;
+      root.style.top = "auto";
+    }
+
+    // Subpixel rounding can still push the chip slightly outside viewport.
+    const after = root.getBoundingClientRect();
+    if (after.left < 0) {
+      xOffset = normalized.xSide === "right" ? Math.max(0, xOffset + after.left) : Math.max(0, xOffset - after.left);
+    } else if (after.right > window.innerWidth) {
+      const dx = after.right - window.innerWidth;
+      xOffset = normalized.xSide === "right" ? Math.max(0, xOffset - dx) : Math.max(0, xOffset + dx);
+    }
+    if (after.top < 0) {
+      yOffset = normalized.ySide === "bottom" ? Math.max(0, yOffset + after.top) : Math.max(0, yOffset - after.top);
+    } else if (after.bottom > window.innerHeight) {
+      const dy = after.bottom - window.innerHeight;
+      yOffset = normalized.ySide === "bottom" ? Math.max(0, yOffset - dy) : Math.max(0, yOffset + dy);
+    }
+
+    if (normalized.xSide === "left") {
+      root.style.left = `${xOffset}px`;
+      root.style.right = "auto";
+    } else {
+      root.style.right = `${xOffset}px`;
+      root.style.left = "auto";
+    }
+    if (normalized.ySide === "top") {
+      root.style.top = `${yOffset}px`;
+      root.style.bottom = "auto";
+    } else {
+      root.style.bottom = `${yOffset}px`;
+      root.style.top = "auto";
+    }
+
+    return {
+      xSide: normalized.xSide,
+      xOffset,
+      ySide: normalized.ySide,
+      yOffset,
+    };
+  }
+
   function loadFloatingPosition() {
     try {
+      localStorage.removeItem(LEGACY_POSITION_STORAGE_KEY);
       const raw = localStorage.getItem(POSITION_STORAGE_KEY);
-      if (!raw) return;
+      if (!raw) {
+        floatingAnchor = applyAnchoredPosition(DEFAULT_ANCHOR);
+        return;
+      }
       const parsed = JSON.parse(raw);
-      const left = Number(parsed?.left);
-      const top = Number(parsed?.top);
-      if (!Number.isFinite(left) || !Number.isFinite(top)) return;
-      const rect = root.getBoundingClientRect();
-      const maxLeft = Math.max(0, window.innerWidth - rect.width);
-      const maxTop = Math.max(0, window.innerHeight - rect.height);
-      applyFloatingPosition(clamp(left, 0, maxLeft), clamp(top, 0, maxTop));
-    } catch (_) {}
+      const anchor = normalizeAnchor(parsed);
+      floatingAnchor = applyAnchoredPosition(anchor || DEFAULT_ANCHOR);
+    } catch (_) {
+      floatingAnchor = applyAnchoredPosition(DEFAULT_ANCHOR);
+    }
   }
 
   function saveFloatingPosition(left, top) {
     try {
-      localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify({ left, top }));
+      const rect = root.getBoundingClientRect();
+      const anchor = buildAnchorFromAbsolute(left, top, rect.width, rect.height);
+      floatingAnchor = applyAnchoredPosition(anchor);
+      localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(floatingAnchor));
     } catch (_) {}
+  }
+
+  function resetFloatingPosition() {
+    try {
+      localStorage.removeItem(POSITION_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_POSITION_STORAGE_KEY);
+    } catch (_) {}
+    floatingAnchor = applyAnchoredPosition(DEFAULT_ANCHOR);
+    return floatingAnchor;
   }
 
   function onDragStart(event) {
@@ -134,8 +249,8 @@
     dragState.startY = event.clientY;
     dragState.originLeft = rect.left;
     dragState.originTop = rect.top;
-    dragState.width = rect.width;
-    dragState.height = rect.height;
+    dragState.width = Math.ceil(rect.width);
+    dragState.height = Math.ceil(rect.height);
     root.dataset.dragging = "1";
     root.setPointerCapture(event.pointerId);
   }
@@ -313,6 +428,14 @@
       })();
       return true;
     }
+    if (message.type === "RESET_FLOATING_POSITION") {
+      sendResponse({ ok: true, anchor: resetFloatingPosition() });
+      return;
+    }
+    if (message.type === "GET_FLOATING_POSITION") {
+      sendResponse({ ok: true, anchor: floatingAnchor });
+      return;
+    }
     return;
   });
 
@@ -320,6 +443,16 @@
   root.addEventListener("pointermove", onDragMove);
   root.addEventListener("pointerup", onDragEnd);
   root.addEventListener("pointercancel", onDragEnd);
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(() => {
+      if (dragState.active) return;
+      floatingAnchor = applyAnchoredPosition(floatingAnchor);
+    });
+    observer.observe(root);
+  }
+  window.addEventListener("resize", () => {
+    floatingAnchor = applyAnchoredPosition(floatingAnchor);
+  });
 
   switchBtn.addEventListener("click", async () => {
     if (Date.now() < suppressClickUntil) return;

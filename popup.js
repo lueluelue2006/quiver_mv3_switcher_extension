@@ -12,6 +12,8 @@ const checkUpdateBtn = document.getElementById("checkUpdateBtn");
 const updateStatusEl = document.getElementById("updateStatus");
 const openUpdateBtn = document.getElementById("openUpdateBtn");
 const repoLinkEl = document.getElementById("repoLink");
+const resetFloatingPosBtn = document.getElementById("resetFloatingPosBtn");
+const positionStatusEl = document.getElementById("positionStatus");
 
 const REPO_WEB_URL = "https://github.com/lueluelue2006/quiver_mv3_switcher_extension";
 const REPO_RELEASES_URL = `${REPO_WEB_URL}/releases`;
@@ -32,6 +34,34 @@ function setUpdateStatus(text, isError = false) {
 function sendMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function getActiveTab() {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(Array.isArray(tabs) ? tabs[0] : null);
+    });
+  });
+}
+
+async function sendMessageToActiveTab(message) {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    throw new Error("未找到当前标签页");
+  }
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tab.id, message, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
@@ -303,6 +333,21 @@ openUpdateBtn.addEventListener("click", () => {
 repoLinkEl.addEventListener("click", (event) => {
   event.preventDefault();
   chrome.tabs.create({ url: REPO_WEB_URL });
+});
+
+resetFloatingPosBtn.addEventListener("click", async () => {
+  positionStatusEl.textContent = "正在重置...";
+  try {
+    const resp = await sendMessageToActiveTab({ type: "RESET_FLOATING_POSITION" });
+    if (!resp?.ok) {
+      throw new Error(resp?.error || "重置失败");
+    }
+    positionStatusEl.textContent = "已重置为默认: 上 12px + 右 12px";
+    setStatus("悬浮位置已重置");
+  } catch (err) {
+    positionStatusEl.textContent = `重置失败: ${String(err?.message || err)}`;
+    setStatus(`重置失败: ${String(err?.message || err)}`, true);
+  }
 });
 
 (async () => {
